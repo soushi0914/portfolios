@@ -1,119 +1,182 @@
-// Howler.jsでサウンドオブジェクトを作る処理
-const snd01 = new Howl({
-    src: "./sounds/maru.mp3"
-});
-const snd02 = new Howl({
-    src: "./sounds/batsu.mp3"
-});
-const snd03 = new Howl({
-    src: "./sounds/Kati.mp3"
-});
-const snd04 = new Howl({
-    src: "./sounds/Make.mp3"
-});
-const snd05 = new Howl({
-    src: "./sounds/Hikiwake.mp3"
-});
-// ゲームの状態
-const CONTINUE = null; // まだ決着がついていない
-const WIN_PLAYER_1 = 1; // 〇の勝ち
-const WIN_PLAYER_2 = -1; // ✕の勝ち
-const DRAW_GAME = 0; // 引き分け
 
-const cells = [ // 空なら0、〇なら1、✕なら-1
-    [0, 0, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-]
-let turn = 1; // 〇の番なら1、✕の番なら-1
+// ゲームの状態
+//--------------------------------------
+// 定数
+//--------------------------------------
+const SIZE = 6;
+
+const CONTINUE = null;
+const WIN_BLACK = 1;   // ●
+const WIN_WHITE = -1;  // ○
+const DRAW_GAME = 0;
+
+//--------------------------------------
+// 盤面（0:空, 1:黒, -1:白）
+//--------------------------------------
+const cells = Array.from({ length: SIZE }, () =>
+    Array(SIZE).fill(0)
+);
+
+let turn = 1; // 1:黒（●）, -1:白（○）
 let result = CONTINUE;
 
-// セルをクリックしたときのイベントを登録
-for (let row = 0; row < 3; row++) {
-    for (let col = 0; col < 3; col++) {
+// 8方向
+const DIRS = [
+    [-1,-1], [-1,0], [-1,1],
+    [0,-1],         [0,1],
+    [1,-1], [1,0], [1,1]
+];
+
+//--------------------------------------
+// 初期配置
+//--------------------------------------
+function init() {
+    const mid1 = SIZE / 2 - 1;
+    const mid2 = SIZE / 2;
+
+    cells[mid1][mid1] = -1;
+    cells[mid1][mid2] =  1;
+    cells[mid2][mid1] =  1;
+    cells[mid2][mid2] = -1;
+
+    redraw();
+    check();
+    document.querySelector("#message").textContent = "黒（●）の番";
+}
+
+//--------------------------------------
+// クリックイベント登録
+//--------------------------------------
+for (let row = 0; row < SIZE; row++) {
+    for (let col = 0; col < SIZE; col++) {
         const cell = document.querySelector(`#cell_${row}_${col}`);
         cell.addEventListener("click", () => {
-            if (result !== CONTINUE) {
-                window.location.reload(true); // 決着がついた後にクリックしたらリロード
-            }
-            if (cells[row][col] === 0) { // 置けるかどうかの判定
-                putMark(row, col); // ○か×を置く
-                turn = turn * -1;
-                check(); // ゲームの状態を確認
-            }
+            if (result !== CONTINUE) return;
+
+            const flips = getFlips(row, col, turn);
+            if (cells[row][col] !== 0 || flips.length === 0) return;
+
+            // 石を置く
+            cells[row][col] = turn;
+            flips.forEach(([r, c]) => cells[r][c] = turn);
+
+            turn *= -1;
+            redraw();
+            check();
         });
     }
 }
 
-// ○か×を置く
-function putMark(row, col) {
-    const cell = document.querySelector(`#cell_${row}_${col}`);
-    if (turn === 1) {
-        cell.textContent = "〇";
-        cell.classList.add("o");
-        cells[row][col] = 1;
-        snd01.play(); // 〇の音を鳴らす
-    } else {
-        cell.textContent = "✕";
-        cell.classList.add("x");
-        cells[row][col] = -1;
-        snd02.play(); // ✕の音を鳴らす
+//--------------------------------------
+// 石をひっくり返せる位置取得
+//--------------------------------------
+function getFlips(row, col, color) {
+    const result = [];
+
+    for (const [dr, dc] of DIRS) {
+        let r = row + dr;
+        let c = col + dc;
+        const temp = [];
+
+        while (
+            r >= 0 && r < SIZE &&
+            c >= 0 && c < SIZE &&
+            cells[r][c] === -color
+        ) {
+            temp.push([r, c]);
+            r += dr;
+            c += dc;
+        }
+
+        if (
+            temp.length > 0 &&
+            r >= 0 && r < SIZE &&
+            c >= 0 && c < SIZE &&
+            cells[r][c] === color
+        ) {
+            result.push(...temp);
+        }
+    }
+    return result;
+}
+
+//--------------------------------------
+// 盤面描画
+//--------------------------------------
+function redraw() {
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            const cell = document.querySelector(`#cell_${r}_${c}`);
+            cell.textContent =
+                cells[r][c] === 1 ? "●" :
+                cells[r][c] === -1 ? "○" : "";
+        }
     }
 }
 
-// ゲームの状態を確認
+//--------------------------------------
+// 勝敗チェック
+//--------------------------------------
 function check() {
-    result = judge(cells);
-    const message = document.querySelector("#message");
-    switch (result) {
-        case WIN_PLAYER_1:
-            message.textContent = "〇の勝ち!";
-            snd03.play(); // 勝ちの音を鳴らす
-            break;
-        case WIN_PLAYER_2:
-            message.textContent = "✕の勝ち!";
-            snd04.play(); // 負けの音を鳴らす
-            break;
-        case DRAW_GAME:
-            message.textContent = "引き分け!";
-            snd05.play(); // 引き分けの音を鳴らす
-            break;
+    // ★ まず勝敗判定
+    if (cells.flat().every(cell => cell !== 0) || (!hasMove(1) && !hasMove(-1))) {
+        result = judge();
+        const message = document.querySelector("#message");
+        if (result === WIN_BLACK) message.textContent = "黒（●）の勝ち！";
+        else if (result === WIN_WHITE) message.textContent = "白（○）の勝ち！";
+        else message.textContent = "引き分け！";
+        return;
     }
+
+    // ★ パス判定
+    if (!hasMove(turn)) {
+        turn *= -1;
+        document.querySelector("#message").textContent =
+            `${turn === 1 ? "黒（●）" : "白（○）"}の番（パス）`;
+        check(); // 再チェック
+        return;
+    }
+
+    // 通常の手番表示
+    document.querySelector("#message").textContent =
+        `${turn === 1 ? "黒（●）" : "白（○）"}の番`;
 }
 
-// 勝敗を判定する処理
-function judge(_cells) {
-    // 調べる必要があるラインをリストアップ
-    const lines = [
-        // 横をチェック
-        [_cells[0][0], _cells[0][1], _cells[0][2]],
-        [_cells[1][0], _cells[1][1], _cells[1][2]],
-        [_cells[2][0], _cells[2][1], _cells[2][2]],
-        // 縦をチェック
-        [_cells[0][0], _cells[1][0], _cells[2][0]],
-        [_cells[0][1], _cells[1][1], _cells[2][1]],
-        [_cells[0][2], _cells[1][2], _cells[2][2]],
-        // 斜めをチェック
-        [_cells[0][0], _cells[1][1], _cells[2][2]],
-        [_cells[0][2], _cells[1][1], _cells[2][0]],
-    ];
-    // 勝ち負けチェック
-    for (let line of lines) {
-        const sum = line[0] + line[1] + line[2];
-        if (sum === 3) {
-            return WIN_PLAYER_1;
-        }
-        if (sum === -3) {
-            return WIN_PLAYER_2;
+//--------------------------------------
+// 合法手があるか
+//--------------------------------------
+function hasMove(color) {
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            // ★ 空きマスだけ調べる
+            if (cells[r][c] !== 0) continue;
+
+            if (getFlips(r, c, color).length > 0) return true;
         }
     }
-    // 継続チェック
-    for (let row = 0; row < 3; row++) {
-        for (let col = 0; col < 3; col++) {
-            if (_cells[row][col] === 0) {
-                return CONTINUE;
-            }
+    return false;
+}
+
+function nextTurn() {
+    turn *= -1;
+    check();
+}
+
+//--------------------------------------
+// 勝敗判定（石数）
+//--------------------------------------
+function judge() {
+    let black = 0, white = 0;
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            if (cells[r][c] === 1) black++;
+            if (cells[r][c] === -1) white++;
         }
     }
+    if (black > white) return WIN_BLACK;
+    if (white > black) return WIN_WHITE;
     return DRAW_GAME;
 }
+
+//--------------------------------------
+init();
